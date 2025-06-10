@@ -1,4 +1,3 @@
-
 import os
 import shutil
 import threading
@@ -35,6 +34,8 @@ class PhotoSorterApp:
         # 中間主圖
         self.image_label = tk.Label(self.main_frame, bg="#1e1e1e")
         self.image_label.place(relx=0.5, rely=0.5, anchor="center")
+        self.image_label.bind("<Button-1>", lambda e: self.move_to_no())
+        self.image_label.bind("<Button-3>", lambda e: self.move_to_yes())
 
         # 右側相似圖
         self.similar_canvas = tk.Canvas(self.main_frame, bg="#1e1e1e", width=250, highlightthickness=0, bd=0)
@@ -43,9 +44,15 @@ class PhotoSorterApp:
         self.similar_canvas.configure(yscrollcommand=self.similar_scroll.set)
         self.similar_canvas.create_window((0, 0), window=self.similar_inner_frame, anchor="nw")
         self.similar_inner_frame.bind("<Configure>", lambda e: self.similar_canvas.configure(scrollregion=self.similar_canvas.bbox("all")))
-        self.similar_canvas.place(relx=1.0, rely=0.5, anchor="e", height=800)
+        self.similar_canvas.place(relx=1.0, rely=0.5, anchor="e", height=800, x= 160)
         self.similar_scroll.place_forget()
         self.bind_scroll_events(self.similar_canvas)
+
+        # 加上這段
+        self.similar_canvas.bind(
+            "<Configure>",
+            lambda e: self.similar_inner_frame.config(width=self.similar_canvas.winfo_width())
+        )
 
         # 按鈕列
         btn_frame = tk.Frame(root, bg="#2e2e2e")
@@ -55,6 +62,19 @@ class PhotoSorterApp:
         tk.Button(btn_frame, text="❌ 不喜歡 (左鍵)", command=self.move_to_no, **style).pack(side="left", padx=10, pady=5)
         tk.Button(btn_frame, text="❤️ 喜歡 (右鍵)", command=self.move_to_yes, **style).pack(side="left", padx=10, pady=5)
         tk.Button(btn_frame, text="🚪 先做到這邊 (Esc)", command=self.exit_program, **style).pack(side="right", padx=10, pady=5)
+        # 顯示目前檔名的「假按鈕」
+        self.filename_display = tk.Label(
+            btn_frame,
+            text="",
+            bg="#3e3e3e",
+            fg="white",
+            width=40,
+            anchor="center",
+            relief="groove",
+            padx=5,
+            pady=5
+        )
+        self.filename_display.pack(side="left", padx=10)
 
         self.root.bind_all("<Left>", lambda e: self.move_to_no())
         self.root.bind_all("<Right>", lambda e: self.move_to_yes())
@@ -133,16 +153,17 @@ class PhotoSorterApp:
         self.image_label.config(image=self.tk_img)
         self.image_label.place(relx=0.5, rely=0.5, anchor="center")
         self.image_label.lift()
+        self.filename_display.config(text=self.image_files[self.current_index])
         self.show_similar_images(self.image_files[self.current_index])
 
     def show_similar_images(self, current_filename):
         for widget in self.similar_inner_frame.winfo_children():
             widget.destroy()
+
         if current_filename not in self.duplicates:
             return
 
         def load():
-            row, col = 0, 0
             for fname, score in sorted(self.duplicates[current_filename], key=lambda x: -x[1]):
                 path = os.path.join(self.folder, fname)
                 if not os.path.exists(path):
@@ -155,19 +176,13 @@ class PhotoSorterApp:
                         thumb = ImageTk.PhotoImage(img)
                         self.thumbs[fname] = thumb
 
-                    def add_thumb(t=thumb, f=fname, r=row, c=col):
+                    def add_thumb(t=thumb, f=fname):
                         lbl = tk.Label(self.similar_inner_frame, image=t, bg="#1e1e1e")
                         lbl.image = t
-                        lbl.grid(row=r, column=c, padx=4, pady=4)
+                        lbl.pack(pady=4)
                         lbl.bind("<Button-1>", lambda e: self.jump_to_image(f))
 
                     self.root.after(0, add_thumb)
-
-                    col += 1
-                    if col >= 2:
-                        col = 0
-                        row += 1
-
                 except:
                     continue
 
@@ -225,8 +240,7 @@ class PhotoSorterApp:
             self.current_index -= 1
             self.show_image()
 
-root = tk.Tk()
-app = PhotoSorterApp(root)
-root.bind("<Button-1>", lambda e: app.move_to_no())
-root.bind("<Button-3>", lambda e: app.move_to_yes())
-root.mainloop()
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = PhotoSorterApp(root)
+    root.mainloop()
