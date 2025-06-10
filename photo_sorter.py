@@ -5,6 +5,8 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
 from imagededup.methods import CNN
+import random
+import torch  # 用來偵測 GPU
 
 SUPPORTED_FORMATS = ('.jpg', '.jpeg', '.png', '.bmp', '.gif')
 
@@ -20,7 +22,6 @@ class PhotoSorterApp:
         self.main_frame = tk.Frame(root, bg="#1e1e1e")
         self.main_frame.pack(expand=True, fill="both")
 
-        # 左側圖片瀏覽
         self.left_canvas = tk.Canvas(self.main_frame, bg="#1e1e1e", width=160, highlightthickness=0, bd=0)
         self.left_inner_frame = tk.Frame(self.left_canvas, bg="#1e1e1e")
         self.left_scroll = tk.Scrollbar(self.main_frame, orient="vertical", command=self.left_canvas.yview, width=0)
@@ -31,55 +32,43 @@ class PhotoSorterApp:
         self.left_scroll.place_forget()
         self.bind_scroll_events(self.left_canvas)
 
-        # 中間主圖
         self.image_label = tk.Label(self.main_frame, bg="#1e1e1e")
         self.image_label.place(relx=0.5, rely=0.5, anchor="center")
         self.image_label.bind("<Button-1>", lambda e: self.move_to_no())
         self.image_label.bind("<Button-3>", lambda e: self.move_to_yes())
 
-        # 右側相似圖
+        self.effect_canvas = tk.Canvas(self.main_frame, bg="#1e1e1e", highlightthickness=0, bd=0)
+        self.effect_canvas.place(relx=0.5, rely=0.5, anchor="center", width=900, height=700)
+        self.root.after(100, self.effect_canvas.tkraise)
+
         self.similar_canvas = tk.Canvas(self.main_frame, bg="#1e1e1e", width=250, highlightthickness=0, bd=0)
         self.similar_inner_frame = tk.Frame(self.similar_canvas, bg="#1e1e1e")
         self.similar_scroll = tk.Scrollbar(self.main_frame, orient="vertical", command=self.similar_canvas.yview, width=0)
         self.similar_canvas.configure(yscrollcommand=self.similar_scroll.set)
         self.similar_canvas.create_window((0, 0), window=self.similar_inner_frame, anchor="nw")
         self.similar_inner_frame.bind("<Configure>", lambda e: self.similar_canvas.configure(scrollregion=self.similar_canvas.bbox("all")))
-        self.similar_canvas.place(relx=1.0, rely=0.5, anchor="e", height=800, x= 160)
+        self.similar_canvas.place(relx=1.0, rely=0.5, anchor="e", height=800, x=160)
         self.similar_scroll.place_forget()
         self.bind_scroll_events(self.similar_canvas)
+        self.similar_canvas.bind("<Configure>", lambda e: self.similar_inner_frame.config(width=self.similar_canvas.winfo_width()))
 
-        # 加上這段
-        self.similar_canvas.bind(
-            "<Configure>",
-            lambda e: self.similar_inner_frame.config(width=self.similar_canvas.winfo_width())
-        )
-
-        # 按鈕列
         btn_frame = tk.Frame(root, bg="#2e2e2e")
         btn_frame.pack(side="bottom", fill="x", pady=10)
         style = {"bg": "#3e3e3e", "fg": "white", "activebackground": "#5e5e5e", "activeforeground": "white", "width": 20}
         tk.Button(btn_frame, text="🔙 回上一張 (Backspace)", command=self.undo_move, **style).pack(side="left", padx=10, pady=5)
         tk.Button(btn_frame, text="❌ 不喜歡 (左鍵)", command=self.move_to_no, **style).pack(side="left", padx=10, pady=5)
         tk.Button(btn_frame, text="❤️ 喜歡 (右鍵)", command=self.move_to_yes, **style).pack(side="left", padx=10, pady=5)
+        tk.Button(btn_frame, text="💎 最愛", command=self.move_to_favorite, **style).pack(side="left", padx=10, pady=5)
         tk.Button(btn_frame, text="🚪 先做到這邊 (Esc)", command=self.exit_program, **style).pack(side="right", padx=10, pady=5)
-        # 顯示目前檔名的「假按鈕」
-        self.filename_display = tk.Label(
-            btn_frame,
-            text="",
-            bg="#3e3e3e",
-            fg="white",
-            width=40,
-            anchor="center",
-            relief="groove",
-            padx=5,
-            pady=5
-        )
+
+        self.filename_display = tk.Label(btn_frame, text="", bg="#3e3e3e", fg="white", width=40, anchor="center", relief="groove", padx=5, pady=5)
         self.filename_display.pack(side="left", padx=10)
 
         self.root.bind_all("<Left>", lambda e: self.move_to_no())
         self.root.bind_all("<Right>", lambda e: self.move_to_yes())
         self.root.bind_all("<BackSpace>", lambda e: self.undo_move())
         self.root.bind_all("<Escape>", lambda e: self.exit_program())
+        self.root.bind_all("<f>", lambda e: self.move_to_favorite())
 
         self.folder = ''
         self.image_files = []
@@ -88,6 +77,8 @@ class PhotoSorterApp:
         self.duplicates = {}
         self.thumbs = {}
 
+        self.loading_label = tk.Label(self.main_frame, text="正在載入特徵中...", bg="#1e1e1e", fg="white", font=("Arial", 16))
+        self.loading_label.place(relx=0.5, rely=0.1, anchor="n")
         self.root.after_idle(self.setup_folder)
 
     def center_window(self, width, height):
@@ -98,6 +89,19 @@ class PhotoSorterApp:
     def bind_scroll_events(self, canvas):
         canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", lambda ev: canvas.yview_scroll(int(-1 * (ev.delta / 120)), "units")))
         canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
+
+    def show_flash_effect(self):
+        flash = tk.Label(self.main_frame, bg="yellow", width=100, height=40)
+        flash.place(relx=0.5, rely=0.5, anchor="center")
+
+        def fade(i=0):
+            if i >= 5:
+                flash.destroy()
+                return
+            flash.configure(bg="#ffffaa" if i % 2 == 0 else "#ffee88")
+            self.root.after(100, lambda: fade(i + 1))
+
+        fade()
 
     def exit_program(self):
         self.root.quit()
@@ -110,18 +114,31 @@ class PhotoSorterApp:
         self.folder = folder
         self.yes_folder = os.path.join(folder, "Yes")
         self.no_folder = os.path.join(folder, "No")
+        self.favorite_folder = os.path.join(folder, "Favorite")
         os.makedirs(self.yes_folder, exist_ok=True)
         os.makedirs(self.no_folder, exist_ok=True)
+        os.makedirs(self.favorite_folder, exist_ok=True)
+
         self.image_files = [f for f in os.listdir(folder) if f.lower().endswith(SUPPORTED_FORMATS) and os.path.isfile(os.path.join(folder, f))]
         if not self.image_files:
             messagebox.showinfo("提示", "找不到圖片檔案")
             self.root.quit()
             return
 
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        print(f"Using device: {device}")
         cnn = CNN()
-        self.encodings = cnn.encode_images(image_dir=self.folder)
-        self.duplicates = cnn.find_duplicates(encoding_map=self.encodings, min_similarity_threshold=0.9, scores=True)
+        cnn.model.to(device)
 
+        def background_process():
+            self.encodings = cnn.encode_images(image_dir=self.folder)
+            self.duplicates = cnn.find_duplicates(encoding_map=self.encodings, min_similarity_threshold=0.9, scores=True)
+            self.root.after(0, self.after_encoding_done)
+
+        threading.Thread(target=background_process, daemon=True).start()
+
+    def after_encoding_done(self):
+        self.loading_label.destroy()
         for i, fname in enumerate(self.image_files):
             path = os.path.join(self.folder, fname)
             try:
@@ -137,7 +154,6 @@ class PhotoSorterApp:
                 bind_thumb()
             except:
                 continue
-
         self.current_index = 0
         self.show_image()
 
@@ -159,7 +175,6 @@ class PhotoSorterApp:
     def show_similar_images(self, current_filename):
         for widget in self.similar_inner_frame.winfo_children():
             widget.destroy()
-
         if current_filename not in self.duplicates:
             return
 
@@ -228,6 +243,10 @@ class PhotoSorterApp:
 
     def move_to_no(self):
         self.animate_swipe("left", lambda: self.move_current_file(self.no_folder))
+
+    def move_to_favorite(self):
+        self.show_flash_effect()
+        self.animate_swipe("right", lambda: self.move_current_file(self.favorite_folder))
 
     def undo_move(self):
         if not self.history:
