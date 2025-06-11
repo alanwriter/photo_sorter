@@ -55,6 +55,20 @@ class PhotoSorterApp:
 
         self.filename_display = tk.Label(btn_frame, text="", bg="#3e3e3e", fg="white", width=40, relief="groove")
         self.filename_display.pack(side="left", padx=10)
+        
+        # 新增一列專門顯示目前檔名（置中對齊）
+        filename_frame = tk.Frame(root, bg="#2e2e2e")
+        filename_frame.pack(side="bottom", fill="x")
+
+        self.favorite_label = tk.Label(
+            filename_frame,
+            text="",
+            bg="#2e2e2e",
+            fg="white",
+            font=("Arial", 10),
+            anchor="center"
+        )
+        self.favorite_label.pack(pady=(3, 0))
 
         self.root.bind_all("<Left>", lambda e: self.move_to_no())
         self.root.bind_all("<Right>", lambda e: self.move_to_yes())
@@ -179,6 +193,7 @@ class PhotoSorterApp:
             lbl.config(bg="white" if i == self.current_index else "#1e1e1e")
         self.left_canvas.yview_moveto(max(0, self.current_index / len(self.image_files)))
         self.show_similar_images(self.image_files[self.current_index])
+        self.favorite_label.config(text=self.image_files[self.current_index])
 
     def show_similar_images(self, current_filename):
         for widget in self.similar_inner_frame.winfo_children():
